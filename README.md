@@ -1,1 +1,1 @@
-# Deepfake-Detection-with-Vision-Transformers
+# Deepfake Detection
