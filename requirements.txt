@@ -1,0 +1,8 @@
+torch==2.0.0
+torchvision==0.15.1
+gradio
+dlib-bin
+opencv-python-headless
+albumentations
+scipy
+tqdm
