@@ -1,4 +1,3 @@
-# revised_train.py
 
 import torch
 import torch.nn as nn
@@ -12,8 +11,8 @@ from tqdm import tqdm
 import os
 
 # Assuming the revised model and dataset scripts are in the same directory
-from revised_model import DeepfakeDetector
-from revised_dataset import DeepfakeDataset, get_train_transforms, get_val_transforms
+from model import DeepfakeDetector
+from dataset import DeepfakeDataset, get_train_transforms, get_val_transforms
 
 # --- Configuration ---
 # Update this path to the root of your 'pde_features' directory
