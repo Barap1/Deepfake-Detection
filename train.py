@@ -9,47 +9,37 @@ import glob
 import numpy as np
 from tqdm import tqdm
 import os
-
-# Assuming the revised model and dataset scripts are in the same directory
 from model import DeepfakeDetector
 from dataset import DeepfakeDataset, get_train_transforms, get_val_transforms
 
-# --- Configuration ---
-# Update this path to the root of your 'pde_features' directory
+
 DATA_DIR = 'S:\Deepfake project stuff\processed_data\pde_features'
-NUM_FRAMES = 20 # Number of frames to use from each video
-IMAGE_SIZE = 224 # Input size for EfficientNet-B0
-BATCH_SIZE = 8 # Physical batch size that fits in VRAM
-ACCUMULATION_STEPS = 4 # Accumulate gradients over 4 batches
+NUM_FRAMES = 20 
+IMAGE_SIZE = 224
+BATCH_SIZE = 8
+ACCUMULATION_STEPS = 4 # accumulate gradients over 4 batches
 EFFECTIVE_BATCH_SIZE = BATCH_SIZE * ACCUMULATION_STEPS
 EPOCHS = 10
-LEARNING_RATE = 1e-4 # Max learning rate for OneCycleLR
-NUM_WORKERS = 4 # Number of CPU workers for data loading
+LEARNING_RATE = 1e-4 
+NUM_WORKERS = 4 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def main():
-    # --- 1. Prepare Data ---
-    # Load file paths from the pre-defined training directory structure
     train_real_files = glob.glob(os.path.join(DATA_DIR, 'train\\real\\*.npz'))
     train_fake_files = glob.glob(os.path.join(DATA_DIR, 'train\\fake\\*.npz'))
 
-    # Combine and create labels
     all_train_files = train_real_files + train_fake_files
     all_train_labels = [0] * len(train_real_files) + [1] * len(train_fake_files)
     
-    # Split the original training data into a new training set and a validation set
-    # This is crucial for monitoring performance and preventing overfitting
     train_files, val_files, train_labels, val_labels = train_test_split(
         all_train_files, all_train_labels, test_size=0.2, random_state=42, stratify=all_train_labels
     )
     
-    # Prepare the test set for final evaluation
     test_real_files = glob.glob(os.path.join(DATA_DIR, 'test/real/*.npz'))
     test_fake_files = glob.glob(os.path.join(DATA_DIR, 'test/fake/*.npz'))
     test_files = test_real_files + test_fake_files
     test_labels = [0] * len(test_real_files) + [1] * len(test_fake_files)
     
-    # Create Datasets and DataLoaders
     train_dataset = DeepfakeDataset(train_files, train_labels, transform=get_train_transforms(IMAGE_SIZE))
     val_dataset = DeepfakeDataset(val_files, val_labels, transform=get_val_transforms(IMAGE_SIZE))
     
@@ -62,15 +52,12 @@ def main():
         num_workers=NUM_WORKERS, pin_memory=True
     )
     
-    # --- 2. Initialize Model, Optimizer, etc. ---
     model = DeepfakeDetector().to(DEVICE)
-    criterion = nn.BCEWithLogitsLoss() # Numerically stable
+    criterion = nn.BCEWithLogitsLoss() 
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE)
     
-    # Mixed precision scaler
     scaler = torch.amp.GradScaler()
 
-    # Learning rate scheduler
     scheduler = optim.lr_scheduler.OneCycleLR(
         optimizer, max_lr=LEARNING_RATE,
         steps_per_epoch=len(train_loader) // ACCUMULATION_STEPS,
@@ -80,42 +67,35 @@ def main():
     print(f"Starting training on {DEVICE}")
     print(f"Physical Batch Size: {BATCH_SIZE}, Accumulation Steps: {ACCUMULATION_STEPS}, Effective Batch Size: {EFFECTIVE_BATCH_SIZE}")
 
-    # --- 3. Training Loop ---
     best_val_auc = 0.0
     for epoch in range(EPOCHS):
         model.train()
         train_loss = 0.0
-        optimizer.zero_grad() # Zero gradients at the start of the epoch
+        optimizer.zero_grad() 
 
         progress_bar = tqdm(enumerate(train_loader), total=len(train_loader), desc=f"Epoch {epoch+1}/{EPOCHS}")
         for i, (inputs, labels) in progress_bar:
             inputs, labels = inputs.to(DEVICE), labels.to(DEVICE).unsqueeze(1)
             
-            # Automatic Mixed Precision
             with torch.amp.autocast('cuda'):
                 outputs = model(inputs)
                 loss = criterion(outputs, labels)
                 
-                # Scale loss for gradient accumulation
                 loss = loss / ACCUMULATION_STEPS
 
-            # Scale loss and backward pass
             scaler.scale(loss).backward()
             
-            # Optimizer step (every ACCUMULATION_STEPS)
             if (i + 1) % ACCUMULATION_STEPS == 0:
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad()
                 scheduler.step()
 
-            train_loss += loss.item() * ACCUMULATION_STEPS # Un-scale for logging
+            train_loss += loss.item() * ACCUMULATION_STEPS 
             progress_bar.set_postfix(loss=f"{train_loss/(i+1):.4f}")
 
-        # --- 4. Validation Loop ---
         val_loss, all_preds, all_labels_val = evaluate(model, val_loader, criterion, DEVICE)
         
-        # Calculate metrics
         val_accuracy = accuracy_score(all_labels_val, all_preds > 0.5)
         val_auc = roc_auc_score(all_labels_val, all_preds)
         val_precision = precision_score(all_labels_val, all_preds > 0.5, zero_division=0)
@@ -127,7 +107,6 @@ def main():
         print(f"  Val Loss: {val_loss:.4f} | Val Acc: {val_accuracy:.4f} | Val AUC: {val_auc:.4f}")
         print(f"  Precision: {val_precision:.4f} | Recall: {val_recall:.4f} | F1-Score: {val_f1:.4f}")
 
-        # Save the best model based on validation AUC
         if val_auc > best_val_auc:
             best_val_auc = val_auc
             torch.save(model.state_dict(), 'best_model.pth')
@@ -136,7 +115,6 @@ def main():
     print("\n--- Training Finished ---")
     print(f"Best validation AUC: {best_val_auc:.4f}")
 
-    # --- 5. Final Evaluation on the Test Set ---
     print("\nLoading best model for final evaluation on the test set...")
     model.load_state_dict(torch.load('best_model.pth'))
 
